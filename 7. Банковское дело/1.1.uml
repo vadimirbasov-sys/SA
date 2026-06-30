@@ -1,0 +1,59 @@
+@startuml
+title C2B Платёжный процесс (авторизация и асинхронный клиринг)
+
+actor "Клиент ЛК" as Client
+participant "Платёжный шлюз" as PG
+participant "Платёжный сервис" as PS
+participant "Ядро банка" as CB
+participant "НСПК" as NSPK
+participant "Мерчант\n(приёмник callback)" as Merchant
+
+== Синхронная авторизация ==
+
+Client -> PG: POST /pay\nIdempotency-Key: 2c7a-8f11\nсумма=3390 RUB\nPAN=2200****1234
+activate PG
+
+PG -> PS: CreatePayment()\nIdempotency-Key\n3390 RUB\n2200****1234
+activate PS
+
+PS -> CB: AuthorizePayment()
+activate CB
+
+CB -> NSPK: Запрос авторизации карты\n3390 RUB\n2200****1234
+activate NSPK
+
+NSPK --> CB: Авторизация одобрена
+deactivate NSPK
+
+CB --> PS: status=AUTHORIZED
+deactivate CB
+
+PS --> PG: paymentId + status=PENDING_CLEARING
+deactivate PS
+
+PG --> Client: "Платёж принят"\nПоказываем статус обработки
+deactivate PG
+
+note right of Client
+  Интерфейс не блокируется навсегда.
+  Клиент получает быстрый ответ,
+  даже если клиринг займёт >5 сек.
+end note
+
+== Асинхронный клиринг ==
+
+... спустя время (>5 сек возможно) ...
+
+NSPK -> CB: Результат клиринга
+activate CB
+
+CB -> PS: PaymentSettled()
+deactivate CB
+
+PS -> Merchant: webhook payment.confirmed\npaymentId\nstatus=CONFIRMED\nсумма=3390
+activate Merchant
+
+Merchant --> PS: HTTP 200 OK
+deactivate Merchant
+
+@enduml

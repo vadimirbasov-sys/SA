@@ -1,0 +1,121 @@
+openapi: 3.0.0
+info:
+  title: API входящих вебхуков для мерчанта (аренда)
+  version: 1.0.0
+  description: |
+    Эндпоинт для приёма уведомлений от платёжной системы
+    о финальном подтверждении клиринга.
+
+paths:
+  /webhooks/payment-confirmed:
+    post:
+      summary: Уведомление о подтверждении платежа
+      description: |
+        Вызывается банком/процессингом после успешного клиринга.
+        **Критично:** обрабатывать идемпотентно (повторы не меняют `PAID`).
+      operationId: handlePaymentConfirmed
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - payment_id
+                - order_id
+                - status
+                - amount
+                - currency
+                - timestamp
+                - signature
+              properties:
+                payment_id:
+                  type: string
+                  description: Уникальный ID транзакции в платёжной системе (сквозной)
+                  example: "tr_20260626_12345_ABCD"
+                order_id:
+                  type: string
+                  description: Внутренний ID заказа аренды, переданный вами при авторизации
+                  example: "RENT-1001-2026"
+                status:
+                  type: string
+                  enum: [PAID, CONFIRMED]
+                  description: Финальный статус (всегда PAID или CONFIRMED для успеха)
+                  example: "PAID"
+                amount:
+                  type: integer
+                  description: Сумма в минимальных единицах (копейки). Для 3390 RUB → 339000
+                  example: 339000
+                currency:
+                  type: string
+                  pattern: '^[A-Z]{3}$'
+                  example: "RUB"
+                timestamp:
+                  type: string
+                  format: date-time
+                  description: Время формирования уведомления (UTC)
+                  example: "2026-06-26T15:00:00.000Z"
+                signature:
+                  type: string
+                  description: HMAC-SHA256 подпись (hex) для верификации источника
+                  example: "a1b2c3d4e5f67890..."
+      responses:
+        '200':
+          description: |
+            Уведомление принято и обработано (или уже было обработано ранее).
+            Повторный вызов с тем же `payment_id` также возвращает 200.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: string
+                    example: "OK"
+                  message:
+                    type: string
+                    example: "Webhook processed successfully"
+        '400':
+          description: Ошибка валидации структуры JSON (не хватает полей)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: string
+                    example: "BAD_REQUEST"
+                  message:
+                    type: string
+                    example: "Missing required field: payment_id"
+        '401':
+          description: |
+            **Ошибка аутентификации** — неверная подпись HMAC.
+            Возвращается, если:
+            - `signature` не совпадает с вычисленной на стороне мерчанта.
+            - Время `timestamp` выходит за допустимый интервал (защита от Replay-атак).
+            При получении 401 платёжная система НЕ должна повторять попытку с этим же запросом (требует ручного вмешательства или перевыпуска подписи).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: string
+                    example: "UNAUTHORIZED"
+                  message:
+                    type: string
+                    example: "HMAC signature mismatch or timestamp expired"
+        '500':
+          description: Внутренняя ошибка сервера мерчанта.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: string
+                    example: "INTERNAL_ERROR"
+                  message:
+                    type: string
+                    example: "Database connection failed"
